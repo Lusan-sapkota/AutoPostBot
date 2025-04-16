@@ -1,0 +1,9 @@
+selenium
+webdriver-manager
+python-dotenv
+google-generativeai
+logging
+argparse
+questionary
+colorama
+pyperclip
