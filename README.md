@@ -104,14 +104,14 @@ Why continuous learning matters in tech careers
 ```
 
 ### 6️⃣ Browser Configuration (Optional):
-* For headless operation, modify the browser settings in `browser.py`
+* For headless operation, modify the browser settings in `run.py`
 * For custom browser profiles, adjust the WebDriver initialization parameters
 
 ## 🎯 Usage
 
 ### Starting the Bot:
 ```bash
-python browser.py
+python run.py
 ```
 
 ### Command-line Arguments:
