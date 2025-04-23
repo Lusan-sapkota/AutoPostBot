@@ -273,31 +273,36 @@ class LinkedInBot:
             # Take a screenshot for debugging
             self.driver.save_screenshot(f"login_error_{int(time.time())}.png")
 
-    def remove_markdown(self, text, ignore_hashtags=False):
-        """Removes markdown syntax from a given text string."""
-        patterns = [
-            r"(\*{1,2})(.*?)\1",  # Bold and italics
-            r"\[(.*?)\]\((.*?)\)",  # Links
-            r"`(.*?)`",  # Inline code
-            r"(\n\s*)- (.*)",  # Unordered lists (with `-`)
-            r"(\n\s*)\* (.*)",  # Unordered lists (with `*`)
-            r"(\n\s*)[0-9]+\. (.*)",  # Ordered lists
-            r"(#+)(.*)",  # Headings
-            r"(>+)(.*)",  # Blockquotes
-            r"(---|\*\*\*)",  # Horizontal rules
-            r"!\[(.*?)\]\((.*?)\)",  # Images
+    def remove_markdown(self, text, ignore_hashtags=True):
+        """Removes markdown syntax from a given text string but keeps LinkedIn-style hashtags."""
+        
+        # Save LinkedIn hashtags (those that are directly attached to words like #Programming)
+        linkedin_hashtags = re.findall(r'#\w+', text)
+        
+        # Define patterns and their replacements
+        replacements = [
+            (r"(\*{1,2})(.*?)\1", r"\2"),  # Bold and italics
+            (r"\[(.*?)\]\((.*?)\)", r"\1"),  # Links (keep just the text, not URL)
+            (r"`(.*?)`", r"\1"),  # Inline code
+            (r"(\n\s*)- (.*)", r"\1\2"),  # Unordered lists with `-`
+            (r"(\n\s*)\* (.*)", r"\1\2"),  # Unordered lists with `*`
+            (r"(\n\s*)[0-9]+\. (.*)", r"\1\2"),  # Ordered lists
+            (r"^(#+)(.*)", r"\2"),  # Headings at start of line
+            (r"(>+)(.*)", r"\2"),  # Blockquotes
+            (r"(---|\*\*\*)", ""),  # Horizontal rules (replace with empty)
+            (r"!\[(.*?)\]\((.*?)\)", r"\1"),  # Images (keep alt text)
         ]
 
-        # If ignoring hashtags, remove the heading pattern
+        # Apply each replacement
+        for pattern, replacement in replacements:
+            text = re.sub(pattern, replacement, text)
+        
+        # Restore the LinkedIn hashtags
         if ignore_hashtags:
-            patterns.remove(r"(#+)(.*)")
-
-        # Replace markdown elements with an empty string
-        for pattern in patterns:
-            text = re.sub(
-                pattern, r" ", text
-            )  
-
+            for hashtag in linkedin_hashtags:
+                if hashtag not in text:
+                    text += f" {hashtag}"
+                    
         return text.strip()
 
     def generate_post_content(self, topic):
@@ -323,15 +328,19 @@ class LinkedInBot:
             1. Start with a compelling hook or statistic
             2. Share a personal insight or experience related to the topic
             3. Provide 3-4 practical takeaways or insights
-            4. Include relevant hashtags (5-7 hashtags)
+            4. Include ONLY 3-5 relevant hashtags at the end
             5. End with an engaging question to promote comments
             
             {trending_context}
             
-            Make the post sound authentic, professional and conversational.
-            Total length should be 1000-1500 characters.
-            Avoid obvious AI-generated patterns and corporate jargon.
-            Include some personality and a touch of human imperfection.
+            IMPORTANT GUIDELINES:
+            - Make the post sound authentic, professional and conversational
+            - Total length must be UNDER 1300 characters (LinkedIn's limit is around 3000)
+            - DO NOT include any markdown symbols (* # - _)
+            - DO NOT include quotation marks around the post
+            - Only use hashtags in proper hashtag format (#Word)
+            - Write in plain text format suitable for direct posting
+            - Include some personality and a touch of human imperfection
             """
             
             # Use structured generation
@@ -341,6 +350,7 @@ class LinkedInBot:
                 "temperature": 0.7,  # Add some creativity
                 "top_p": 0.95,
                 "top_k": 40,
+                "max_output_tokens": 1500,
             }
             
             post_response = client.generate_content(
@@ -349,18 +359,22 @@ class LinkedInBot:
             )
             
             if post_response.text:
-                # Process the generated text
-                post_text = self.remove_markdown(post_response.text, ignore_hashtags=True)
+                # Process the generated text - strip any markdown that might have been included
+                post_text = self.remove_markdown(post_response.text)
                 
-                # Ensure hashtags are properly formatted
+                # Ensure proper hashtag formatting and limit length
                 post_text = self._ensure_proper_hashtags(post_text)
+                
+                # Verify length is within limits
+                if len(post_text) > 2800:  # Give some buffer
+                    post_text = post_text[:2800]
                 
                 return post_text
             else:
-                return f"Excited to share some thoughts on {topic}! #technology #leadership"
+                return f"Excited to share some thoughts on {topic}! #Technology #Leadership"
         except Exception as e:
             logging.error(f"Failed to generate post content: {str(e)}", exc_info=True)
-            return f"Excited to share some thoughts on {topic}! #technology #leadership"
+            return f"Excited to share some thoughts on {topic}! #Technology #Leadership"
 
     def _get_trending_topics(self):
         """Try to fetch trending topics from LinkedIn to make posts more relevant."""
@@ -653,6 +667,13 @@ class LinkedInBot:
         timestamp = int(time.time())
         logging.info("Posting to LinkedIn - starting process.")
         try:
+            
+            # just store the ID separately for verification
+            unique_id = f"post-{timestamp}"
+            
+            # Track in logs but don't add to the post
+            logging.info(f"Creating post with tracking ID: {unique_id}")
+            
             # Close overlapping elements
             self.close_overlapping_elements()
             
@@ -847,15 +868,6 @@ class LinkedInBot:
                 # Try JavaScript click
                 self.driver.execute_script("arguments[0].click();", post_text_area)
                 self.random_delay(1, 2)
-            
-            # Add a unique identifier to each post for verification
-            unique_id = f"[Post ID: {timestamp}]"
-            # Add it at the end of the post, but before hashtags
-            if "#" in post_text:
-                parts = post_text.split("#", 1)
-                post_text = parts[0].strip() + f" {unique_id}\n\n#" + parts[1]
-            else:
-                post_text = post_text.strip() + f" {unique_id}"
             
             # Try to insert text using multiple methods
             inserted_text = False
@@ -1325,7 +1337,7 @@ class LinkedInBot:
                     media_button_selectors = [
                         "//button[contains(@aria-label, 'Add a photo')]",
                         "//button[contains(@aria-label, 'media')]",
-                        "//button[contains(@class, 'share-actions__primary-action')]//following-sibling::button",
+                        "//button[contains(@class, 'share-creation-state__add-content')]",
                         "//button[contains(@class, 'artdeco-button')][contains(@class, 'share-creation-state__media-button')]",
                         "//button[contains(@class, 'share-creation-state__image-button')]",
                         "//button[contains(@class, 'gallery-control__button')]"
@@ -1356,24 +1368,27 @@ class LinkedInBot:
                         for selector in file_input_selectors:
                             try:
                                 file_input = self.driver.find_element(By.XPATH, selector)
-                                break
+                                if file_input:
+                                    break
                             except:
                                 continue
                         
                         if file_input:
                             file_input.send_keys(os.path.abspath(image_path))
                             logging.info(f"Image file path sent: {os.path.abspath(image_path)}")
-                            self.random_delay(3, 5)  # Wait for upload
                             
-                            # Wait for upload to complete - also with multiple indicators
+                            # Wait for upload to complete
                             try:
-                                WebDriverWait(self.driver, 20).until_not(
-                                    EC.presence_of_element_located((By.XPATH, 
-                                        "//div[contains(@class, 'share-creation-state__progress-bar') or contains(@class, 'progress-bar')]"))
+                                # Wait for upload progress indicator to disappear
+                                WebDriverWait(self.driver, 15).until_not(
+                                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'share-box-file__progress-bar')]"))
                                 )
                                 logging.info("Image upload completed successfully")
+                                self.random_delay(2, 4)
                             except:
-                                logging.info("Progress bar not found or upload completed quickly")
+                                # If we can't detect the upload progress, just wait a bit
+                                logging.info("Waiting for image upload to complete")
+                                self.random_delay(5, 10)
                         else:
                             logging.error("Could not find the file input element")
                     else:
@@ -1637,10 +1652,8 @@ class LinkedInBot:
             while not success and attempt_count < max_attempts:
                 try:
                     if image_path and os.path.exists(image_path) and attempt_count == 0:
-                        # Try with image only on first attempt
                         success = self.post_to_linkedin_with_image(post_text, image_path)
                     else:
-                        # Fall back to no image on subsequent attempts
                         success = self.post_to_linkedin(post_text)
                 except Exception as posting_error:
                     logging.error(f"Error during posting attempt #{attempt_count+1}: {str(posting_error)}")
@@ -1663,23 +1676,22 @@ class LinkedInBot:
                 logging.info("Topic removed from Topics.txt.")
                 
                 # Post-posting activities to seem more natural
-                
-                # 1. Sometimes view your own post
-                if random.random() < 0.3:
-                    self._view_own_recent_post()
+                # Simplified versions that won't get stuck
+                try:
+                    # 1. Sometimes view your own post
+                    if random.random() < 0.3:
+                        self.driver.get("https://www.linkedin.com/in/me/recent-activity/shares/")
+                        self.random_delay(3, 5)
                     
-                # 2. Engage with other content
-                if random.random() < 0.7:  # 70% chance
-                    engagement_count = random.randint(1, 5)  # Engage with 1-5 posts
-                    self._engage_with_feed_content(engagement_count)
-                    
-                # 3. Randomly check notifications
-                if random.random() < 0.4:
-                    self._check_notifications()
-                    
-                # 4. Sometimes message connections
-                if random.random() < 0.15:  # 15% chance
-                    self._message_random_connections()
+                    # 2. Engage with other content
+                    if random.random() < 0.7:
+                        self.driver.get("https://www.linkedin.com/feed/")
+                        self.random_delay(2, 4)
+                        self.driver.execute_script("window.scrollBy(0, 500)")
+                        
+                    # No other actions to avoid getting stuck
+                except:
+                    pass  # Ignore errors in these optional behaviors
             else:
                 logging.error(f"Failed to post topic after {max_attempts} attempts: {topic}")
                 
@@ -2003,10 +2015,9 @@ class LinkedInBot:
         try:
             # Get random keywords for searching connections
             search_terms = ["work", "project", "team", "business", "tech", "development", "marketing", "design"]
-            keyword = random.choice(search_terms)
             
             # Search for connections
-            connections = self.search_connections(keyword)
+            connections = self.search_connections(random.choice(search_terms))
             
             if connections and len(connections) > 0:
                 # Select random connection (max 2)
@@ -2854,7 +2865,7 @@ if __name__ == "__main__":
 
                     def display_topic_options(topics, page=0, per_page=10):
                         """Display topics with pagination."""
-                        total_pages = (len(topics) + per_page - 1) # per_page
+                        total_pages = (len(topics) + per_page - 1) // per_page
                         start = page * per_page
                         end = min(start + per_page, len(topics))
                         
